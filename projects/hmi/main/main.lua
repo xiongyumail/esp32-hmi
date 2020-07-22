@@ -2,7 +2,7 @@ json = require('json')
 dump = require('dump')
 wifi = require('wifi')
 
-local WIFI_SSID       = "ESP32-S2-STA"
+local WIFI_SSID       = "ESP32-STA"
 local WIFI_PASSWORD   = "123456789"
 
 local LV_SYMBOL_LEFT  = "\xef\x81\x93"
@@ -22,9 +22,9 @@ lcd.print('Connecting\nWiFi\n'..'#ff0000 '..WIFI_SSID..'#\n...')
 if (not wifi.start_sta(WIFI_SSID, WIFI_PASSWORD)) then
     print('Connect to AP and log in to http://192.168.1.1 and configure router information')
     lcd.print('Connect to AP and log in to http://192.168.1.1 and configure router information')
-    wifi.start_ap('ESP32-S2-AP', '')
+    wifi.start_ap('ESP32-AP', '')
 end
-httpd.start('ESP32-S2-HMI')
+httpd.start('ESP32-HMI')
 lcd.write('WIFI', 1)
 assert(sys.sntp('ntp1.aliyun.com'))
 print(os.date("%Y-%m-%d %H:%M:%S"))

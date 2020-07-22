@@ -1,12 +1,12 @@
-
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_heap_caps.h"
-#include "esp32s2/rom/lldesc.h"
-#include "soc/system_reg.h"
+#include "esp32/rom/lldesc.h"
+#include "soc/dport_access.h"
+#include "soc/dport_reg.h"
 #include "esp_log.h"
 #include "lcd.h"
 
@@ -63,8 +63,8 @@ static void IRAM_ATTR lcd_isr(void *arg)
 {
     int event;
     BaseType_t HPTaskAwoken = pdFALSE;
-    typeof(GPSPI3.dma_int_st) int_st = GPSPI3.dma_int_st;
-    GPSPI3.dma_int_clr.val = int_st.val;
+    typeof(SPI3.dma_int_st) int_st = SPI3.dma_int_st;
+    SPI3.dma_int_clr.val = int_st.val;
     // ets_printf("intr: 0x%x\n", int_st);
 
     if (int_st.out_eof) {
@@ -100,11 +100,11 @@ static void spi_write_data(uint8_t *data, size_t len)
         memcpy(lcd_obj->dma[(x % 2) * lcd_obj->half_node_cnt].buf, data, lcd_obj->half_buffer_size);
         data += lcd_obj->half_buffer_size;
         xQueueReceive(lcd_obj->event_queue, (void *)&event, portMAX_DELAY);
-        GPSPI3.mosi_dlen.usr_mosi_bit_len = lcd_obj->half_buffer_size * 8 - 1;
-        GPSPI3.dma_out_link.addr = ((uint32_t)&lcd_obj->dma[(x % 2) * lcd_obj->half_node_cnt]) & 0xfffff;
-        GPSPI3.dma_out_link.start = 1;
+        SPI3.mosi_dlen.usr_mosi_dbitlen = lcd_obj->half_buffer_size * 8 - 1;
+        SPI3.dma_out_link.addr = ((uint32_t)&lcd_obj->dma[(x % 2) * lcd_obj->half_node_cnt]) & 0xfffff;
+        SPI3.dma_out_link.start = 1;
         ets_delay_us(1);
-        GPSPI3.cmd.usr = 1;
+        SPI3.cmd.usr = 1;
     }
     cnt = len % lcd_obj->half_buffer_size;
     // 处理剩余非完整段数据
@@ -124,11 +124,11 @@ static void spi_write_data(uint8_t *data, size_t len)
         lcd_obj->dma[end_pos].eof = 1;
         lcd_obj->dma[end_pos].empty = NULL;
         xQueueReceive(lcd_obj->event_queue, (void *)&event, portMAX_DELAY);
-        GPSPI3.mosi_dlen.usr_mosi_bit_len = cnt * 8 - 1;
-        GPSPI3.dma_out_link.addr = ((uint32_t)&lcd_obj->dma[(x % 2) * lcd_obj->half_node_cnt]) & 0xfffff;
-        GPSPI3.dma_out_link.start = 1;
+        SPI3.mosi_dlen.usr_mosi_dbitlen = cnt * 8 - 1;
+        SPI3.dma_out_link.addr = ((uint32_t)&lcd_obj->dma[(x % 2) * lcd_obj->half_node_cnt]) & 0xfffff;
+        SPI3.dma_out_link.start = 1;
         ets_delay_us(1);
-        GPSPI3.cmd.usr = 1;
+        SPI3.cmd.usr = 1;
     }
     xQueueReceive(lcd_obj->event_queue, (void *)&event, portMAX_DELAY);
 }
@@ -279,59 +279,58 @@ static void lcd_st7789_config(lcd_config_t *config)
 static void lcd_config(lcd_config_t *config)
 {
 
-    REG_CLR_BIT(DPORT_PERIP_CLK_EN0_REG, DPORT_SPI3_CLK_EN);
-    REG_SET_BIT(DPORT_PERIP_CLK_EN0_REG, DPORT_SPI3_CLK_EN);
-    REG_SET_BIT(DPORT_PERIP_RST_EN0_REG, DPORT_SPI3_RST);
-    REG_CLR_BIT(DPORT_PERIP_RST_EN0_REG, DPORT_SPI3_RST);
-    REG_CLR_BIT(DPORT_PERIP_CLK_EN0_REG, DPORT_SPI3_DMA_CLK_EN);
-    REG_SET_BIT(DPORT_PERIP_CLK_EN0_REG, DPORT_SPI3_DMA_CLK_EN);
-    REG_SET_BIT(DPORT_PERIP_RST_EN0_REG, DPORT_SPI3_DMA_RST);
-    REG_CLR_BIT(DPORT_PERIP_RST_EN0_REG, DPORT_SPI3_DMA_RST);
+    DPORT_REG_CLR_BIT(DPORT_PERIP_CLK_EN_REG, DPORT_SPI3_CLK_EN);
+    DPORT_REG_SET_BIT(DPORT_PERIP_CLK_EN_REG, DPORT_SPI3_CLK_EN);
+    DPORT_REG_SET_BIT(DPORT_PERIP_RST_EN_REG, DPORT_SPI3_RST);
+    DPORT_REG_CLR_BIT(DPORT_PERIP_RST_EN_REG, DPORT_SPI3_RST);
+    DPORT_REG_CLR_BIT(DPORT_PERIP_CLK_EN_REG, DPORT_SPI_DMA_CLK_EN);
+    DPORT_REG_SET_BIT(DPORT_PERIP_CLK_EN_REG, DPORT_SPI_DMA_CLK_EN);
+    DPORT_REG_SET_BIT(DPORT_PERIP_RST_EN_REG, DPORT_SPI_DMA_RST);
+    DPORT_REG_CLR_BIT(DPORT_PERIP_RST_EN_REG, DPORT_SPI_DMA_RST);
+    DPORT_SET_PERI_REG_BITS(DPORT_SPI_DMA_CHAN_SEL_REG, DPORT_SPI3_DMA_CHAN_SEL, 1, DPORT_SPI3_DMA_CHAN_SEL_S); // ESP32 SPI DMA Channel config, channel 0, SPI3
 
     int div = 2;
     if (config->clk_fre == 80000000) {
-        GPSPI3.clock.clk_equ_sysclk = 1;
+        SPI3.clock.clk_equ_sysclk = 1;
     } else {
-        GPSPI3.clock.clk_equ_sysclk = 0;
+        SPI3.clock.clk_equ_sysclk = 0;
         div = 80000000 / config->clk_fre;
     }
-    GPSPI3.ctrl1.clk_mode = 0;
-    GPSPI3.clock.clkdiv_pre = 1 - 1;
-    GPSPI3.clock.clkcnt_n = div - 1;
-    GPSPI3.clock.clkcnt_l = div - 1;
-    GPSPI3.clock.clkcnt_h = ((div >> 1) - 1);
+    SPI3.clock.clkdiv_pre = 1 - 1;
+    SPI3.clock.clkcnt_n = div - 1;
+    SPI3.clock.clkcnt_l = div - 1;
+    SPI3.clock.clkcnt_h = ((div >> 1) - 1);
     
-    GPSPI3.misc.ck_dis = 0;
+    SPI3.pin.ck_dis = 0;
 
-    GPSPI3.user1.val = 0;
-    GPSPI3.slave.val = 0;
-    GPSPI3.misc.ck_idle_edge = 0;
-    GPSPI3.user.ck_out_edge = 0;
-    GPSPI3.ctrl.wr_bit_order = 0;
-    GPSPI3.ctrl.rd_bit_order = 0;
-    GPSPI3.user.val = 0;
-    GPSPI3.user.cs_setup = 1;
-    GPSPI3.user.cs_hold = 1;
-    GPSPI3.user.usr_mosi = 1;
-    GPSPI3.user.usr_mosi_highpart = 0;
+    SPI3.user1.val = 0;
+    SPI3.slave.val = 0;
+    SPI3.pin.ck_idle_edge = 0;
+    SPI3.user.ck_out_edge = 0;
+    SPI3.ctrl.wr_bit_order = 0;
+    SPI3.ctrl.rd_bit_order = 0;
+    SPI3.user.val = 0;
+    SPI3.user.cs_setup = 1;
+    SPI3.user.cs_hold = 1;
+    SPI3.user.usr_mosi = 1;
+    SPI3.user.usr_mosi_highpart = 0;
 
-    GPSPI3.dma_conf.val = 0;
-    GPSPI3.dma_conf.out_rst = 1;
-    GPSPI3.dma_conf.out_rst = 0;
-    GPSPI3.dma_conf.ahbm_fifo_rst = 1;
-    GPSPI3.dma_conf.ahbm_fifo_rst = 0;
-    GPSPI3.dma_conf.ahbm_rst = 1;
-    GPSPI3.dma_conf.ahbm_rst = 0;
-    GPSPI3.dma_out_link.dma_tx_ena = 1;
-    GPSPI3.dma_conf.out_eof_mode = 1;
-    GPSPI3.cmd.usr = 0;
+    SPI3.dma_conf.val = 0;
+    SPI3.dma_conf.out_rst = 1;
+    SPI3.dma_conf.out_rst = 0;
+    SPI3.dma_conf.ahbm_fifo_rst = 1;
+    SPI3.dma_conf.ahbm_fifo_rst = 0;
+    SPI3.dma_conf.ahbm_rst = 1;
+    SPI3.dma_conf.ahbm_rst = 0;
+    SPI3.dma_conf.out_eof_mode = 1;
+    SPI3.cmd.usr = 0;
 
-    GPSPI3.dma_int_clr.val = ~0;
-    GPSPI3.dma_int_ena.val = 0;
-    GPSPI3.dma_int_ena.out_eof = 1;
+    SPI3.dma_int_clr.val = ~0;
+    SPI3.dma_int_ena.out_eof = 1;
 
     intr_handle_t intr_handle = NULL;
     esp_intr_alloc(ETS_SPI3_DMA_INTR_SOURCE, 0, lcd_isr, NULL, &intr_handle);
+    esp_intr_enable(intr_handle);
 }
 
 static void lcd_set_pin(lcd_config_t *config)
@@ -339,12 +338,12 @@ static void lcd_set_pin(lcd_config_t *config)
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[config->pin_clk], PIN_FUNC_GPIO);
     gpio_set_direction(config->pin_clk, GPIO_MODE_OUTPUT);
     gpio_set_pull_mode(config->pin_clk, GPIO_FLOATING);
-    gpio_matrix_out(config->pin_clk, SPI3_CLK_OUT_MUX_IDX, 0, 0);
+    gpio_matrix_out(config->pin_clk, VSPICLK_OUT_IDX, 0, 0);
 
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[config->pin_mosi], PIN_FUNC_GPIO);
     gpio_set_direction(config->pin_mosi, GPIO_MODE_OUTPUT);
     gpio_set_pull_mode(config->pin_mosi, GPIO_FLOATING);
-    gpio_matrix_out(config->pin_mosi, SPI3_D_OUT_IDX, 0, 0);
+    gpio_matrix_out(config->pin_mosi, VSPID_OUT_IDX, 0, 0);
 
     //Initialize non-SPI GPIOs
     gpio_config_t io_conf;

@@ -26,29 +26,29 @@ static const char *TAG = "main";
 #define CAM_WIDTH   (GUI_CAM_WIDTH)
 #define CAM_HIGH    (GUI_CAM_HIGH)
 
-#define LCD_CLK   GPIO_NUM_15
-#define LCD_MOSI  GPIO_NUM_9
-#define LCD_DC    GPIO_NUM_13
-#define LCD_RST   GPIO_NUM_16
-#define LCD_CS    GPIO_NUM_11
-#define LCD_BK    GPIO_NUM_6
+#define LCD_CLK   GPIO_NUM_0
+#define LCD_MOSI  GPIO_NUM_12
+#define LCD_DC    GPIO_NUM_2
+#define LCD_CS    GPIO_NUM_19
+#define LCD_RST   -1
+#define LCD_BK    -1
 
-#define CAM_XCLK  GPIO_NUM_1
-#define CAM_PCLK  GPIO_NUM_0
-#define CAM_VSYNC GPIO_NUM_2
-#define CAM_HSYNC GPIO_NUM_3
+#define CAM_XCLK  GPIO_NUM_4
+#define CAM_PCLK  GPIO_NUM_25
+#define CAM_VSYNC GPIO_NUM_5
+#define CAM_HSYNC GPIO_NUM_27
 
-#define CAM_D0    GPIO_NUM_46
-#define CAM_D1    GPIO_NUM_45
-#define CAM_D2    GPIO_NUM_41
-#define CAM_D3    GPIO_NUM_42
+#define CAM_D0    GPIO_NUM_34
+#define CAM_D1    GPIO_NUM_13
+#define CAM_D2    GPIO_NUM_14
+#define CAM_D3    GPIO_NUM_35
 #define CAM_D4    GPIO_NUM_39
-#define CAM_D5    GPIO_NUM_40
-#define CAM_D6    GPIO_NUM_21
-#define CAM_D7    GPIO_NUM_38
+#define CAM_D5    GPIO_NUM_38
+#define CAM_D6    GPIO_NUM_37
+#define CAM_D7    GPIO_NUM_36
 
-#define CAM_SCL   GPIO_NUM_7
-#define CAM_SDA   GPIO_NUM_8
+#define CAM_SCL   GPIO_NUM_23
+#define CAM_SDA   GPIO_NUM_18
 
 static lv_disp_t *disp[1];
 
@@ -94,7 +94,9 @@ static void gui_task(void *arg)
         .pin_rst = LCD_RST,
         .pin_bk = LCD_BK,
         .max_buffer_size = 2 * 1024,
-        .horizontal = 2 // 2: UP, 3： DOWN
+        .horizontal = 2, // 2: UP, 3： DOWN
+        .dis_invert = true,
+        .dis_bgr = false
     };
 
     lcd_init(&lcd_config);
@@ -197,7 +199,7 @@ static void cam_task(void *arg)
     cam_config_t cam_config = {
         .bit_width = 8,
         .mode.jpeg = false,
-        .xclk_fre = 8 * 1000 * 1000,
+        .xclk_fre = 5 * 1000 * 1000,
         .pin = {
             .xclk  = CAM_XCLK,
             .pclk  = CAM_PCLK,
@@ -265,8 +267,8 @@ static void cam_task(void *arg)
         }
         cam_give(cam_buf);   
         // 使用逻辑分析仪观察帧率
-        gpio_set_level(LCD_BK, 1);
-        gpio_set_level(LCD_BK, 0);  
+        // gpio_set_level(LCD_BK, 1);
+        // gpio_set_level(LCD_BK, 0);  
     }
 
 fail:

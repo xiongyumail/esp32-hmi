@@ -142,7 +142,7 @@ static void side_create(lv_obj_t * parent)
     lv_img_set_src(img, &logo);
 
     lv_obj_t * txt = lv_label_create(h2, NULL);
-    lv_label_set_text(txt, "ESP32-S2");
+    lv_label_set_text(txt, "ESP32");
 
     lv_obj_set_size(h2, 72, 72);
     lv_obj_set_pos(h2, 248, 240 - 72);

@@ -7,8 +7,8 @@
 #include "esp_log.h"
 #include "soc/i2s_struct.h"
 #include "soc/apb_ctrl_reg.h"
-#include "esp32s2/rom/lldesc.h"
-#include "esp32s2/rom/cache.h"
+#include "esp32/rom/lldesc.h"
+#include "esp32/rom/cache.h"
 #include "soc/dport_access.h"
 #include "soc/dport_reg.h"
 #include "driver/ledc.h"
@@ -98,12 +98,11 @@ static void cam_config(cam_config_t *config)
     I2S0.clkm_conf.clkm_div_num = 2;
     I2S0.clkm_conf.clkm_div_b = 0;
     I2S0.clkm_conf.clkm_div_a = 0;
-    I2S0.clkm_conf.clk_sel = 2;
     I2S0.clkm_conf.clk_en = 1;
 
     // 配置采样率
     I2S0.sample_rate_conf.rx_bck_div_num = 1;
-    I2S0.sample_rate_conf.rx_bits_mod = config->bit_width;
+    I2S0.sample_rate_conf.rx_bits_mod = (config->bit_width == 8) ? 0 : 1;
 
     // 配置数据格式
     I2S0.conf.rx_start = 0;
@@ -117,16 +116,11 @@ static void cam_config(cam_config_t *config)
     I2S0.conf.rx_short_sync = 0;
     I2S0.conf.rx_mono = 0;
     I2S0.conf.rx_msb_shift = 0;
-    I2S0.conf.rx_dma_equal = 1;
 
     I2S0.conf1.rx_pcm_bypass = 1;
 
-    I2S0.conf2.cam_sync_fifo_reset = 1;
-    I2S0.conf2.cam_sync_fifo_reset = 0;
     I2S0.conf2.lcd_en = 1;
     I2S0.conf2.camera_en = 1;
-    I2S0.conf2.i_v_sync_filter_en = 1;
-    I2S0.conf2.i_v_sync_filter_thres = 1;
 
     I2S0.conf_chan.rx_chan_mod = 1;
 
@@ -169,7 +163,7 @@ static void cam_set_pin(cam_config_t *config)
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[config->pin.vsync], PIN_FUNC_GPIO);
     gpio_set_direction(config->pin.vsync, GPIO_MODE_INPUT);
     gpio_set_pull_mode(config->pin.vsync, GPIO_FLOATING);
-    gpio_matrix_in(config->pin.vsync, I2S0I_V_SYNC_IDX, config->vsync_invert);
+    gpio_matrix_in(config->pin.vsync, I2S0I_V_SYNC_IDX, !config->vsync_invert);
 
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[config->pin.hsync], PIN_FUNC_GPIO);
     gpio_set_direction(config->pin.hsync, GPIO_MODE_INPUT);
@@ -245,8 +239,8 @@ static void cam_dma_start(void)
         I2S0.conf.rx_start = 1;
         if(cam_obj->jpeg_mode) {
             // 手动给第一帧vsync
-            gpio_matrix_in(cam_obj->vsync_pin, I2S0I_V_SYNC_IDX, !cam_obj->vsync_invert);
             gpio_matrix_in(cam_obj->vsync_pin, I2S0I_V_SYNC_IDX, cam_obj->vsync_invert);
+            gpio_matrix_in(cam_obj->vsync_pin, I2S0I_V_SYNC_IDX, !cam_obj->vsync_invert);
         }
     }
 }
@@ -299,7 +293,12 @@ static void cam_task(void *arg)
                     if (cam_obj->cnt == 0) {
                         cam_vsync_intr_enable(1); // 需要cam真正start接收到第一个buf数据再打开vsync中断
                     }
-                    memcpy(&cam_obj->frame1_buffer[cam_obj->cnt * cam_obj->half_buffer_size], &cam_obj->buffer[(cam_obj->cnt % 2) * cam_obj->half_buffer_size], cam_obj->half_buffer_size);
+                    uint8_t *out_buf = &cam_obj->frame1_buffer[cam_obj->cnt * (cam_obj->half_buffer_size >> 1)];
+                    uint8_t *in_buf = &cam_obj->buffer[(cam_obj->cnt % 2) * cam_obj->half_buffer_size];
+                    for (int x = 0; x < cam_obj->half_buffer_size; x += 4) {
+                        out_buf[(x >> 1)] = in_buf[x + 3];
+                        out_buf[(x >> 1) + 1] = in_buf[x + 1];
+                    }
 
                     if(cam_obj->jpeg_mode) {
                         if (cam_obj->frame1_buffer_en == 0) {
@@ -313,7 +312,7 @@ static void cam_task(void *arg)
 
                     if (cam_obj->frame1_buffer_en == 0) {
                         frame_buffer_event.frame_buffer = cam_obj->frame1_buffer;
-                        frame_buffer_event.len = (cam_obj->cnt + 1) * cam_obj->half_buffer_size;
+                        frame_buffer_event.len = (cam_obj->cnt + 1) * (cam_obj->half_buffer_size >> 1);
                         xQueueSend(cam_obj->frame_buffer_queue, (void *)&frame_buffer_event, portMAX_DELAY);
                         state = CAM_STATE_IDLE;
                     } else {
@@ -332,7 +331,12 @@ static void cam_task(void *arg)
                     if (cam_obj->cnt == 0) {
                         cam_vsync_intr_enable(1); // 需要cam真正start接收到第一个buf数据再打开vsync中断
                     }
-                    memcpy(&cam_obj->frame2_buffer[cam_obj->cnt * cam_obj->half_buffer_size], &cam_obj->buffer[(cam_obj->cnt % 2) * cam_obj->half_buffer_size], cam_obj->half_buffer_size);
+                    uint8_t *out_buf = &cam_obj->frame2_buffer[cam_obj->cnt * (cam_obj->half_buffer_size >> 1)];
+                    uint8_t *in_buf = &cam_obj->buffer[(cam_obj->cnt % 2) * cam_obj->half_buffer_size];
+                    for (int x = 0; x < cam_obj->half_buffer_size; x += 4) {
+                        out_buf[(x >> 1)] = in_buf[x + 3];
+                        out_buf[(x >> 1) + 1] = in_buf[x + 1];
+                    }
 
                     if(cam_obj->jpeg_mode) {
                         if (cam_obj->frame2_buffer_en == 0) {
@@ -346,7 +350,7 @@ static void cam_task(void *arg)
 
                     if (cam_obj->frame2_buffer_en == 0) {
                         frame_buffer_event.frame_buffer = cam_obj->frame2_buffer;
-                        frame_buffer_event.len = (cam_obj->cnt + 1) * cam_obj->half_buffer_size;
+                        frame_buffer_event.len = (cam_obj->cnt + 1) * (cam_obj->half_buffer_size >> 1);
                         xQueueSend(cam_obj->frame_buffer_queue, (void *)&frame_buffer_event, portMAX_DELAY);
                         state = CAM_STATE_IDLE;
                     } else {
@@ -389,7 +393,7 @@ void cam_dma_config(cam_config_t *config)
         cam_obj->dma_size = 1024;
     } else {
         for (cnt = 0;;cnt++) { // 寻找可以整除的buffer大小
-            if ((config->size.width * config->size.high * 2) % (config->max_buffer_size - cnt) == 0) {
+            if ((config->size.width * config->size.high * 4) % (config->max_buffer_size - cnt) == 0) {
                 break;
             }
         }
@@ -406,7 +410,7 @@ void cam_dma_config(cam_config_t *config)
 
     cam_obj->node_cnt = (cam_obj->buffer_size) / cam_obj->dma_size; // DMA节点个数
     cam_obj->half_node_cnt = cam_obj->node_cnt / 2;
-    cam_obj->total_cnt = (config->size.width * config->size.high * 2) / cam_obj->half_buffer_size; // 产生中断拷贝的次数, 乒乓拷贝
+    cam_obj->total_cnt = (config->size.width * config->size.high * 4) / cam_obj->half_buffer_size; // 产生中断拷贝的次数, 乒乓拷贝
 
     ESP_LOGI(TAG, "cam_buffer_size: %d, cam_dma_size: %d, cam_dma_node_cnt: %d, cam_total_cnt: %d\n", cam_obj->buffer_size, cam_obj->dma_size, cam_obj->node_cnt, cam_obj->total_cnt);
 
@@ -423,7 +427,7 @@ void cam_dma_config(cam_config_t *config)
     }
 
     I2S0.in_link.addr = ((uint32_t)&cam_obj->dma[0]) & 0xfffff;
-    I2S0.rx_eof_num = cam_obj->half_buffer_size; // 乒乓操作
+    I2S0.rx_eof_num = cam_obj->half_buffer_size / 4; // 乒乓操作, ESP32 4Byte
 }
 
 void cam_deinit()

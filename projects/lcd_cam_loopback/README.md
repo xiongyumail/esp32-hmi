@@ -11,6 +11,6 @@ FPS: 38 Hz
 Please unplug the camera module before downloading the code!!!
 
 ```bash
-idf.py set-target esp32s2
+idf.py set-target esp32
 idf.py build flash monitor
 ```
