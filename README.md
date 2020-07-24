@@ -1,9 +1,6 @@
-# _ESP32-S2-HMI_
+# _ESP32-HMI_
 
-_HMI evaluation suite for new low power, low cost and secure Internet of Things chip ESP32-S2. ESP32-S2 chip is equipped with Xtensa 32-bit LX7 single-core processor.
-Working frequency up to 240 MHz, providing a wealth of peripheral interfaces, including SPI, I2S, UART, I2C, LED PWM, PCNT, LCD interface, Camera interface, ADC, DAC,
-Touch sensors, temperature sensors and up to 43 GPIOs. Supports high-resolution LCD displays and Camera Sensor, as well as a variety of extension options.
-Perfectly supports open source GUI LittleVGL, providing a large number of rich and easy-to-use GUI components and design examples._
+_HMI evaluation suite for new low power, low cost and secure Internet of Things chip ESP32.Perfectly supports open source GUI LittleVGL, providing a large number of rich and easy-to-use GUI components and design examples._
 
 ![pin_conf.png](docs/pin_conf.png)
 
@@ -31,7 +28,7 @@ Perfectly supports open source GUI LittleVGL, providing a large number of rich a
 
     * tools
 
-      * ESP32-S2 sdk
+      * ESP32 sdk
 
     * Data
 
@@ -46,8 +43,8 @@ You can follow the steps below to set up the development environment, or directl
 * clone
 
   ```bash
-  git clone --recursive https://github.com/xiongyumail/esp32-s2-hmi
-  cd esp32-s2-hmi
+  git clone --recursive https://github.com/xiongyumail/esp32-hmi
+  cd esp32-hmi
   ```
 
   * note
