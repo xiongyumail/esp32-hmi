@@ -1,6 +1,6 @@
 # _LCD_CAM_LOOPBACK_
 
-FPS: 38 Hz
+FPS: 12 Hz
 
 ![fps.png](fps.png)
 

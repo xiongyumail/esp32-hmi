@@ -387,13 +387,15 @@ void cam_give(uint8_t *buffer)
 void cam_dma_config(cam_config_t *config) 
 {
     int cnt = 0;
+    uint32_t total_len = config->size.width * config->size.high * (config->mode.bit8 ? sizeof(uint8_t) : sizeof(uint16_t));
+    total_len = total_len * 2; // ESP32 4byte data-> 2byte valid data 
     if (config->mode.jpeg) {
         cam_obj->buffer_size = 2048;
         cam_obj->half_buffer_size = cam_obj->buffer_size / 2;
         cam_obj->dma_size = 1024;
     } else {
         for (cnt = 0;;cnt++) { // 寻找可以整除的buffer大小
-            if ((config->size.width * config->size.high * 4) % (config->max_buffer_size - cnt) == 0) {
+            if (total_len % (config->max_buffer_size - cnt) == 0) {
                 break;
             }
         }
@@ -410,7 +412,7 @@ void cam_dma_config(cam_config_t *config)
 
     cam_obj->node_cnt = (cam_obj->buffer_size) / cam_obj->dma_size; // DMA节点个数
     cam_obj->half_node_cnt = cam_obj->node_cnt / 2;
-    cam_obj->total_cnt = (config->size.width * config->size.high * 4) / cam_obj->half_buffer_size; // 产生中断拷贝的次数, 乒乓拷贝
+    cam_obj->total_cnt = total_len / cam_obj->half_buffer_size; // 产生中断拷贝的次数, 乒乓拷贝
 
     ESP_LOGI(TAG, "cam_buffer_size: %d, cam_dma_size: %d, cam_dma_node_cnt: %d, cam_total_cnt: %d\n", cam_obj->buffer_size, cam_obj->dma_size, cam_obj->node_cnt, cam_obj->total_cnt);
 

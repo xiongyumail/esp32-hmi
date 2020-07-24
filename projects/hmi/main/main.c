@@ -26,11 +26,11 @@ static const char *TAG = "main";
 #define CAM_WIDTH   (GUI_CAM_WIDTH)
 #define CAM_HIGH    (GUI_CAM_HIGH)
 
-#define LCD_CLK   GPIO_NUM_0
-#define LCD_MOSI  GPIO_NUM_12
+#define LCD_CLK   GPIO_NUM_12
+#define LCD_MOSI  GPIO_NUM_22
 #define LCD_DC    GPIO_NUM_2
-#define LCD_CS    GPIO_NUM_19
-#define LCD_RST   -1
+#define LCD_CS    GPIO_NUM_15
+#define LCD_RST   GPIO_NUM_26
 #define LCD_BK    -1
 
 #define CAM_XCLK  GPIO_NUM_4
@@ -43,12 +43,15 @@ static const char *TAG = "main";
 #define CAM_D2    GPIO_NUM_14
 #define CAM_D3    GPIO_NUM_35
 #define CAM_D4    GPIO_NUM_39
-#define CAM_D5    GPIO_NUM_38
-#define CAM_D6    GPIO_NUM_37
+#define CAM_D5    GPIO_NUM_21
+#define CAM_D6    GPIO_NUM_19
 #define CAM_D7    GPIO_NUM_36
 
 #define CAM_SCL   GPIO_NUM_23
 #define CAM_SDA   GPIO_NUM_18
+
+#define CAM_PWD   GPIO_NUM_32
+#define CAM_RST   GPIO_NUM_33
 
 static lv_disp_t *disp[1];
 
@@ -199,6 +202,7 @@ static void cam_task(void *arg)
     cam_config_t cam_config = {
         .bit_width = 8,
         .mode.jpeg = false,
+        .mode.bit8 = false,
         .xclk_fre = 5 * 1000 * 1000,
         .pin = {
             .xclk  = CAM_XCLK,
@@ -213,16 +217,29 @@ static void cam_task(void *arg)
             .width = CAM_WIDTH,
             .high  = CAM_HIGH,
         },
-        .max_buffer_size = 4 * 1024,
+        .max_buffer_size = 8 * 1024,
         .task_stack = 1024,
         .task_pri = configMAX_PRIORITIES
     };
 
     // 使用PingPang buffer，帧率更高， 也可以单独使用一个buffer节省内存
-    cam_config.frame1_buffer = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * 2 * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
-    cam_config.frame2_buffer = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * 2 * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
+    cam_config.frame1_buffer = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * (cam_config.mode.bit8 ? sizeof(uint8_t) : sizeof(uint16_t)), MALLOC_CAP_SPIRAM);
+    cam_config.frame2_buffer = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * (cam_config.mode.bit8 ? sizeof(uint8_t) : sizeof(uint16_t)), MALLOC_CAP_SPIRAM);
 
     cam_init(&cam_config);
+
+    if (CAM_PWD != -1 && CAM_RST != -1) {
+        gpio_config_t io_conf;
+        io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
+        io_conf.mode = GPIO_MODE_OUTPUT;
+        io_conf.pin_bit_mask = (1ULL << CAM_PWD) | (1ULL << CAM_RST);
+        io_conf.pull_down_en = 0;
+        io_conf.pull_up_en = 0;
+        gpio_config(&io_conf);
+
+        gpio_set_level(CAM_PWD, 0);
+        gpio_set_level(CAM_RST, 1);
+    }
 
     sensor_t sensor;
     SCCB_Init(CAM_SDA, CAM_SCL);
@@ -248,7 +265,7 @@ static void cam_task(void *arg)
         sensor.set_res_raw(&sensor, 0, 0, 2079, 1547, 8, 2, 1920, 800, CAM_WIDTH, CAM_HIGH, true, true);
         sensor.set_vflip(&sensor, 1);
         sensor.set_hmirror(&sensor, 1);
-        sensor.set_pll(&sensor, false, 10, 1, 0, false, 0, true, 5); // 13 fps
+        sensor.set_pll(&sensor, false, 10, 1, 0, false, 0, true, 5); // 8 fps
     } else {
         ESP_LOGE(TAG, "sensor is temporarily not supported\n");
         goto fail;
