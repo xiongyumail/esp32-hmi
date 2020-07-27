@@ -97,6 +97,7 @@ static void cam_task(void *arg)
     // 使用PingPang buffer，帧率更高， 也可以单独使用一个buffer节省内存
     cam_config.frame1_buffer = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * (cam_config.mode.bit8 ? sizeof(uint8_t) : sizeof(uint16_t)), MALLOC_CAP_SPIRAM);
     cam_config.frame2_buffer = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * (cam_config.mode.bit8 ? sizeof(uint8_t) : sizeof(uint16_t)), MALLOC_CAP_SPIRAM);
+    uint8_t *jpeg_buf = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 
     cam_init(&cam_config);
 
@@ -178,6 +179,12 @@ static void cam_task(void *arg)
 #else
         lcd_set_index(0, 0, CAM_WIDTH - 1, CAM_HIGH - 1);
         lcd_write_data(cam_buf, CAM_WIDTH * CAM_HIGH * 2);
+        size_t jpeg_len = jpeg_encode(cam_buf, CAM_WIDTH, CAM_HIGH, jpeg_buf, CAM_WIDTH * CAM_HIGH * sizeof(uint16_t));
+        printf("jpeg_len: %d\n", jpeg_len);
+        for (int x = 0; x < 10; x++) {
+            ets_printf("%d ", jpeg_buf[x]);
+        }
+        ets_printf("\n");
 #endif
         cam_give(cam_buf);   
         // 使用逻辑分析仪观察帧率
@@ -194,5 +201,5 @@ fail:
 
 void app_main() 
 {
-    xTaskCreate(cam_task, "cam_task", 4096, NULL, 5, NULL);
+    xTaskCreate(cam_task, "cam_task", 10240, NULL, 5, NULL);
 }
