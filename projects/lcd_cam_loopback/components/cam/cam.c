@@ -151,7 +151,7 @@ static void cam_set_pin(cam_config_t *config)
     io_conf.pull_up_en = 1;
     io_conf.pull_down_en = 0;
     gpio_config(&io_conf);
-    gpio_install_isr_service(0);
+    gpio_install_isr_service(ESP_INTR_FLAG_LOWMED | ESP_INTR_FLAG_IRAM);
     gpio_isr_handler_add(config->pin.vsync, cam_vsync_isr, NULL);
     gpio_intr_disable(config->pin.vsync);
 
@@ -390,9 +390,9 @@ void cam_dma_config(cam_config_t *config)
     uint32_t total_len = config->size.width * config->size.high * (config->mode.bit8 ? sizeof(uint8_t) : sizeof(uint16_t));
     total_len = total_len * 2; // ESP32 4byte data-> 2byte valid data 
     if (config->mode.jpeg) {
-        cam_obj->buffer_size = 2048;
+        cam_obj->buffer_size = 8000;
         cam_obj->half_buffer_size = cam_obj->buffer_size / 2;
-        cam_obj->dma_size = 1024;
+        cam_obj->dma_size = 4000;
     } else {
         for (cnt = 0;;cnt++) { // 寻找可以整除的buffer大小
             if (total_len % (config->max_buffer_size - cnt) == 0) {
@@ -482,7 +482,7 @@ int cam_init(const cam_config_t *config)
     } else {
         cam_obj->frame2_buffer_en = 0;
     }
-    esp_intr_alloc(ETS_I2S0_INTR_SOURCE, 0, cam_isr, NULL, &cam_obj->intr_handle);
+    esp_intr_alloc(ETS_I2S0_INTR_SOURCE, ESP_INTR_FLAG_LOWMED | ESP_INTR_FLAG_IRAM, cam_isr, NULL, &cam_obj->intr_handle);
     xTaskCreate(cam_task, "cam_task", config->task_stack, NULL, config->task_pri, &cam_obj->task_handle);
     return 0;
 }
