@@ -98,7 +98,7 @@ void write_jpeg(uint8_t* buff, unsigned size)
     }
 }
 
-size_t jpeg_encode(uint8_t *img, int w, int h, uint8_t *jpeg, size_t max_size)
+size_t jpeg_encode(jpeg_encode_mode_t mode, uint8_t *img, int w, int h, uint8_t *jpeg, size_t max_size)
 {
     jpeg_encode_obj.out = jpeg;
     jpeg_encode_obj.out_pos = 0;
@@ -108,7 +108,12 @@ size_t jpeg_encode(uint8_t *img, int w, int h, uint8_t *jpeg, size_t max_size)
     int line = h / 8; 
     int line_size = w * 8 * sizeof(uint16_t);
     for (int x = 0; x < line; x++) {
-        encode_line_rgb16(&img[line_size * x], x);
+        switch (mode) {
+            default: 
+            case ENCODE_YUV_MODE: encode_line_yuv(&img[line_size * x], x); break;
+            case ENCODE_RGB16_MODE: encode_line_rgb16(&img[line_size * x], x); break;
+            case ENCODE_RGB24_MODE: encode_line_rgb24(&img[line_size * x], x); break;
+        }
     }
     huffman_stop();
 

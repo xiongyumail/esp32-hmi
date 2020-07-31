@@ -312,12 +312,7 @@ static int16_t quantize(const int16_t data, const uint16_t qt)
 
 // code-stream output counter
 static unsigned jpgn = 0;
-// code-stream output buffer, adjust its size if you need
-#ifdef RELEASE
-#define BUFFSIZE (256)
-#else
-#define BUFFSIZE (128)
-#endif //RELEASE
+#define BUFFSIZE (1024)
 unsigned char jpgbuff[BUFFSIZE];
 
 static void writebyte(const unsigned char b)

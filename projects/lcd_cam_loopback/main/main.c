@@ -21,6 +21,8 @@
 static const char *TAG = "main";
 
 #define JPEG_MODE 0
+#define YUV_MODE 0
+#define JPEG_ENCODE 0
 #define DEBUG 0
 
 #define CAM_WIDTH   (320)
@@ -97,7 +99,9 @@ static void cam_task(void *arg)
     // 使用PingPang buffer，帧率更高， 也可以单独使用一个buffer节省内存
     cam_config.frame1_buffer = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * (cam_config.mode.bit8 ? sizeof(uint8_t) : sizeof(uint16_t)), MALLOC_CAP_SPIRAM);
     cam_config.frame2_buffer = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * (cam_config.mode.bit8 ? sizeof(uint8_t) : sizeof(uint16_t)), MALLOC_CAP_SPIRAM);
+#if JPEG_ENCODE
     uint8_t *jpeg_buf = (uint8_t *)heap_caps_malloc(CAM_WIDTH * CAM_HIGH * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+#endif
 
     cam_init(&cam_config);
 
@@ -125,7 +129,11 @@ static void cam_task(void *arg)
         if (cam_config.mode.jpeg) {
             OV2640_JPEG_Mode();
         } else {
+#if YUV_MODE
+            OV2640_YUV_Mode();
+#else
             OV2640_RGB565_Mode(false);	//RGB565模式
+#endif
         }
         
         OV2640_ImageSize_Set(800, 600);
@@ -179,6 +187,16 @@ static void cam_task(void *arg)
 #else
         lcd_set_index(0, 0, CAM_WIDTH - 1, CAM_HIGH - 1);
         lcd_write_data(cam_buf, CAM_WIDTH * CAM_HIGH * 2);
+
+#if JPEG_ENCODE
+        int jpeg_len = jpeg_encode(YUV_MODE ? ENCODE_YUV_MODE: ENCODE_RGB16_MODE, cam_buf, CAM_WIDTH, CAM_HIGH, jpeg_buf, CAM_WIDTH * CAM_HIGH * sizeof(uint16_t));
+
+        printf("jpeg_len: %d\n", jpeg_len);
+        for (int x = 0; x < 10; x++) {
+            ets_printf("%d ", jpeg_buf[x]);
+        }
+        ets_printf("\n");
+#endif
 #endif
         cam_give(cam_buf);   
         // 使用逻辑分析仪观察帧率
