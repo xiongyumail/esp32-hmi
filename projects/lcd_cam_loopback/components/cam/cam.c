@@ -48,7 +48,7 @@ typedef struct {
     uint8_t vsync_pin;
     uint8_t vsync_invert;
     uint8_t hsync_invert;
-    cam_event_t event;
+    QueueHandle_t event_queue;
     QueueHandle_t frame_buffer_queue;
     TaskHandle_t task_handle;
     intr_handle_t intr_handle;
@@ -58,12 +58,13 @@ static cam_obj_t *cam_obj = NULL;
 
 void IRAM_ATTR cam_isr(void *arg)
 {
+    cam_event_t cam_event = {0};
     BaseType_t HPTaskAwoken = pdFALSE;
     typeof(I2S0.int_st) int_st = I2S0.int_st;
     I2S0.int_clr.val = int_st.val;
     if (int_st.in_suc_eof) {
-        cam_obj->event = CAM_IN_SUC_EOF_EVENT;
-        vTaskNotifyGiveFromISR( cam_obj->task_handle, &HPTaskAwoken );
+        cam_event = CAM_IN_SUC_EOF_EVENT;
+        xQueueSendFromISR(cam_obj->event_queue, (void *)&cam_event, &HPTaskAwoken);
     }
 
     if(HPTaskAwoken == pdTRUE) {
@@ -74,12 +75,13 @@ void IRAM_ATTR cam_isr(void *arg)
 #include "hal/gpio_ll.h"
 void IRAM_ATTR cam_vsync_isr(void *arg)
 {
+    cam_event_t cam_event = {0};
     BaseType_t HPTaskAwoken = pdFALSE;
     // filter
     ets_delay_us(1);
     if (gpio_ll_get_level(&GPIO, cam_obj->vsync_pin) == !cam_obj->vsync_invert) {
-        cam_obj->event = CAM_VSYNC_EVENT;
-        vTaskNotifyGiveFromISR( cam_obj->task_handle, &HPTaskAwoken );
+        cam_event = CAM_VSYNC_EVENT;
+        xQueueSendFromISR(cam_obj->event_queue, (void *)&cam_event, &HPTaskAwoken);
     }
 
     if(HPTaskAwoken == pdTRUE) {
@@ -264,12 +266,14 @@ typedef enum {
 static void cam_task(void *arg)
 {
     int state = CAM_STATE_IDLE;
+    cam_event_t cam_event = {0};
     frame_buffer_event_t frame_buffer_event = {0};
+    xQueueReset(cam_obj->event_queue);
     while (1) {
-        ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
+        xQueueReceive(cam_obj->event_queue, (void *)&cam_event, portMAX_DELAY);
         switch (state) {
             case CAM_STATE_IDLE: {
-                if (cam_obj->event == CAM_VSYNC_EVENT) { 
+                if (cam_event == CAM_VSYNC_EVENT) { 
                     if (cam_obj->frame1_buffer_en) {
                         cam_dma_start();
                         cam_vsync_intr_enable(0);
@@ -285,7 +289,7 @@ static void cam_task(void *arg)
             break;
 
             case CAM_STATE_READ_BUF1: {
-                if (cam_obj->event == CAM_IN_SUC_EOF_EVENT) {
+                if (cam_event == CAM_IN_SUC_EOF_EVENT) {
                     if (cam_obj->cnt == 0) {
                         cam_vsync_intr_enable(1); // 需要cam真正start接收到第一个buf数据再打开vsync中断
                     }
@@ -314,7 +318,7 @@ static void cam_task(void *arg)
                     } else {
                         cam_obj->cnt++;
                     }
-                } else if (cam_obj->event == CAM_VSYNC_EVENT) {
+                } else if (cam_event == CAM_VSYNC_EVENT) {
                     if(cam_obj->jpeg_mode) {
                         cam_obj->frame1_buffer_en = 0;
                     }
@@ -323,7 +327,7 @@ static void cam_task(void *arg)
             break;
 
             case CAM_STATE_READ_BUF2: {
-                if (cam_obj->event == CAM_IN_SUC_EOF_EVENT) {
+                if (cam_event == CAM_IN_SUC_EOF_EVENT) {
                     if (cam_obj->cnt == 0) {
                         cam_vsync_intr_enable(1); // 需要cam真正start接收到第一个buf数据再打开vsync中断
                     }
@@ -352,7 +356,7 @@ static void cam_task(void *arg)
                     } else {
                         cam_obj->cnt++;
                     }
-                } else if (cam_obj->event == CAM_VSYNC_EVENT) {
+                } else if (cam_event == CAM_VSYNC_EVENT) {
                     if(cam_obj->jpeg_mode) {
                         cam_obj->frame2_buffer_en = 0;
                     }
@@ -436,6 +440,7 @@ void cam_deinit()
     cam_stop();
     esp_intr_free(cam_obj->intr_handle);
     vTaskDelete(cam_obj->task_handle);
+    vQueueDelete(cam_obj->event_queue);
     vQueueDelete(cam_obj->frame_buffer_queue);
     free(cam_obj->dma);
     free(cam_obj->buffer);
@@ -461,6 +466,7 @@ int cam_init(const cam_config_t *config)
     cam_config(config);
     cam_dma_config(config);
 
+    cam_obj->event_queue = xQueueCreate(2, sizeof(cam_event_t));
     cam_obj->frame_buffer_queue = xQueueCreate(2, sizeof(frame_buffer_event_t));
 
     if (cam_obj->frame1_buffer != NULL) {
