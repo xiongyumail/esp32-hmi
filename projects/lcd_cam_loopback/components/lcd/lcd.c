@@ -167,14 +167,64 @@ void lcd_rst()
     lcd_delay_ms(100);
 }
 
-static void lcd_st7789_config(lcd_config_t *config)
+static void lcd_gc9a01_config(lcd_config_t *config)
 {
     lcd_set_cs(0);
 
-    lcd_write_cmd(0x36); // MADCTL (36h): Memory Data Access Control
-
     uint8_t bgr = (config->dis_bgr ? 0x08 : 0x0);
 
+    lcd_write_cmd(0xEF);
+    lcd_write_cmd(0xEB);
+    lcd_write_byte(0x14); 
+
+    lcd_write_cmd(0xFE);             
+    lcd_write_cmd(0xEF); 
+
+    lcd_write_cmd(0xEB);    
+    lcd_write_byte(0x14); 
+
+    lcd_write_cmd(0x84);            
+    lcd_write_byte(0x40); 
+
+    lcd_write_cmd(0x85);            
+    lcd_write_byte(0xFF); 
+
+    lcd_write_cmd(0x86);            
+    lcd_write_byte(0xFF); 
+
+    lcd_write_cmd(0x87);            
+    lcd_write_byte(0xFF);
+
+    lcd_write_cmd(0x88);            
+    lcd_write_byte(0x0A);
+
+    lcd_write_cmd(0x89);            
+    lcd_write_byte(0x21); 
+
+    lcd_write_cmd(0x8A);            
+    lcd_write_byte(0x00); 
+
+    lcd_write_cmd(0x8B);            
+    lcd_write_byte(0x80); 
+
+    lcd_write_cmd(0x8C);            
+    lcd_write_byte(0x01); 
+
+    lcd_write_cmd(0x8D);            
+    lcd_write_byte(0x01); 
+
+    lcd_write_cmd(0x8E);            
+    lcd_write_byte(0xFF); 
+
+    lcd_write_cmd(0x8F);            
+    lcd_write_byte(0xFF); 
+
+
+    lcd_write_cmd(0xB6);
+    lcd_write_byte(0x00);
+    lcd_write_byte(0x20);
+
+    lcd_write_cmd(0x36);
     switch (config->horizontal) {
         case 0: {
             lcd_write_byte(0x00 | bgr);
@@ -187,7 +237,7 @@ static void lcd_st7789_config(lcd_config_t *config)
         break;
 
         case 2: {
-            lcd_write_byte(0x70 | bgr);
+            lcd_write_byte(0x60 | bgr);
         }
         break;
 
@@ -202,78 +252,186 @@ static void lcd_st7789_config(lcd_config_t *config)
         break;
     }
 
-    lcd_write_cmd(0x3A);  // COLMOD (3Ah): Interface Pixel Format 
-    lcd_write_byte(0x05);
+    lcd_write_cmd(0x3A);            
+    lcd_write_byte(0x05); 
 
-    lcd_write_cmd(0xB2); // PORCTRL (B2h): Porch Setting 
-    lcd_write_byte(0x0C);
-    lcd_write_byte(0x0C);
-    lcd_write_byte(0x00);
-    lcd_write_byte(0x33);
-    lcd_write_byte(0x33); 
 
-    lcd_write_cmd(0xB7); // GCTRL (B7h): Gate Control 
-    lcd_write_byte(0x35);  
+    lcd_write_cmd(0x90);            
+    lcd_write_byte(0x08);
+    lcd_write_byte(0x08);
+    lcd_write_byte(0x08);
+    lcd_write_byte(0x08); 
 
-    lcd_write_cmd(0xBB); // VCOMS (BBh): VCOM Setting 
-    lcd_write_byte(0x19);
+    lcd_write_cmd(0xBD);            
+    lcd_write_byte(0x06);
 
-    lcd_write_cmd(0xC0); // LCMCTRL (C0h): LCM Control 
-    lcd_write_byte(0x2C);
+    lcd_write_cmd(0xBC);            
+    lcd_write_byte(0x00);    
 
-    lcd_write_cmd(0xC2); // VDVVRHEN (C2h): VDV and VRH Command Enable
+    lcd_write_cmd(0xFF);            
+    lcd_write_byte(0x60);
     lcd_write_byte(0x01);
-
-    lcd_write_cmd(0xC3); // VRHS (C3h): VRH Set
-    lcd_write_byte(0x12);   
-
-    lcd_write_cmd(0xC4); // VDVS (C4h): VDV Set 
-    lcd_write_byte(0x20);  
-
-    lcd_write_cmd(0xC6); // FRCTRL2 (C6h): Frame Rate Control in Normal Mode 
-    lcd_write_byte(0x0F);    
-
-    lcd_write_cmd(0xD0); // PWCTRL1 (D0h): Power Control 1 
-    lcd_write_byte(0xA4);
-    lcd_write_byte(0xA1);
-
-    lcd_write_cmd(0xE0); // PVGAMCTRL (E0h): Positive Voltage Gamma Control
-    lcd_write_byte(0xD0);
     lcd_write_byte(0x04);
-    lcd_write_byte(0x0D);
-    lcd_write_byte(0x11);
+
+    lcd_write_cmd(0xC3);            
     lcd_write_byte(0x13);
-    lcd_write_byte(0x2B);
-    lcd_write_byte(0x3F);
-    lcd_write_byte(0x54);
-    lcd_write_byte(0x4C);
+    lcd_write_cmd(0xC4);            
+    lcd_write_byte(0x13);
+
+    lcd_write_cmd(0xC9);            
+    lcd_write_byte(0x22);
+
+    lcd_write_cmd(0xBE);            
+    lcd_write_byte(0x11); 
+
+    lcd_write_cmd(0xE1);            
+    lcd_write_byte(0x10);
+    lcd_write_byte(0x0E);
+
+    lcd_write_cmd(0xDF);            
+    lcd_write_byte(0x21);
+    lcd_write_byte(0x0c);
+    lcd_write_byte(0x02);
+
+    lcd_write_cmd(0xF0);   
+    lcd_write_byte(0x45);
+    lcd_write_byte(0x09);
+    lcd_write_byte(0x08);
+    lcd_write_byte(0x08);
+    lcd_write_byte(0x26);
+    lcd_write_byte(0x2A);
+
+    lcd_write_cmd(0xF1);    
+    lcd_write_byte(0x43);
+    lcd_write_byte(0x70);
+    lcd_write_byte(0x72);
+    lcd_write_byte(0x36);
+    lcd_write_byte(0x37);  
+    lcd_write_byte(0x6F);
+
+
+    lcd_write_cmd(0xF2);   
+    lcd_write_byte(0x45);
+    lcd_write_byte(0x09);
+    lcd_write_byte(0x08);
+    lcd_write_byte(0x08);
+    lcd_write_byte(0x26);
+    lcd_write_byte(0x2A);
+
+    lcd_write_cmd(0xF3);   
+    lcd_write_byte(0x43);
+    lcd_write_byte(0x70);
+    lcd_write_byte(0x72);
+    lcd_write_byte(0x36);
+    lcd_write_byte(0x37); 
+    lcd_write_byte(0x6F);
+
+    lcd_write_cmd(0xED);    
+    lcd_write_byte(0x1B); 
+    lcd_write_byte(0x0B); 
+
+    lcd_write_cmd(0xAE);            
+    lcd_write_byte(0x77);
+
+    lcd_write_cmd(0xCD);            
+    lcd_write_byte(0x63);        
+
+
+    lcd_write_cmd(0x70);            
+    lcd_write_byte(0x07);
+    lcd_write_byte(0x07);
+    lcd_write_byte(0x04);
+    lcd_write_byte(0x0E); 
+    lcd_write_byte(0x0F); 
+    lcd_write_byte(0x09);
+    lcd_write_byte(0x07);
+    lcd_write_byte(0x08);
+    lcd_write_byte(0x03);
+
+    lcd_write_cmd(0xE8);            
+    lcd_write_byte(0x34);
+
+    lcd_write_cmd(0x62);            
     lcd_write_byte(0x18);
     lcd_write_byte(0x0D);
-    lcd_write_byte(0x0B);
-    lcd_write_byte(0x1F);
-    lcd_write_byte(0x23);
+    lcd_write_byte(0x71);
+    lcd_write_byte(0xED);
+    lcd_write_byte(0x70); 
+    lcd_write_byte(0x70);
+    lcd_write_byte(0x18);
+    lcd_write_byte(0x0F);
+    lcd_write_byte(0x71);
+    lcd_write_byte(0xEF);
+    lcd_write_byte(0x70); 
+    lcd_write_byte(0x70);
 
-    lcd_write_cmd(0xE1); // NVGAMCTRL (E1h): Negative Voltage Gamma Control
-    lcd_write_byte(0xD0);
-    lcd_write_byte(0x04);
-    lcd_write_byte(0x0C);
+    lcd_write_cmd(0x63);            
+    lcd_write_byte(0x18);
     lcd_write_byte(0x11);
+    lcd_write_byte(0x71);
+    lcd_write_byte(0xF1);
+    lcd_write_byte(0x70); 
+    lcd_write_byte(0x70);
+    lcd_write_byte(0x18);
     lcd_write_byte(0x13);
-    lcd_write_byte(0x2C);
-    lcd_write_byte(0x3F);
-    lcd_write_byte(0x44);
-    lcd_write_byte(0x51);
-    lcd_write_byte(0x2F);
-    lcd_write_byte(0x1F);
-    lcd_write_byte(0x1F);
-    lcd_write_byte(0x20);
-    lcd_write_byte(0x23);
+    lcd_write_byte(0x71);
+    lcd_write_byte(0xF3);
+    lcd_write_byte(0x70); 
+    lcd_write_byte(0x70);
 
-    lcd_write_cmd(config->dis_invert ? 0x21 : 0x20); // INVON (21h): Display Inversion On
+    lcd_write_cmd(0x64);            
+    lcd_write_byte(0x28);
+    lcd_write_byte(0x29);
+    lcd_write_byte(0xF1);
+    lcd_write_byte(0x01);
+    lcd_write_byte(0xF1);
+    lcd_write_byte(0x00);
+    lcd_write_byte(0x07);
 
-    lcd_write_cmd(0x11); // SLPOUT (11h): Sleep Out 
+    lcd_write_cmd(0x66);            
+    lcd_write_byte(0x3C);
+    lcd_write_byte(0x00);
+    lcd_write_byte(0xCD);
+    lcd_write_byte(0x67);
+    lcd_write_byte(0x45);
+    lcd_write_byte(0x45);
+    lcd_write_byte(0x10);
+    lcd_write_byte(0x00);
+    lcd_write_byte(0x00);
+    lcd_write_byte(0x00);
 
-    lcd_write_cmd(0x29); // DISPON (29h): Display On
+    lcd_write_cmd(0x67);            
+    lcd_write_byte(0x00);
+    lcd_write_byte(0x3C);
+    lcd_write_byte(0x00);
+    lcd_write_byte(0x00);
+    lcd_write_byte(0x00);
+    lcd_write_byte(0x01);
+    lcd_write_byte(0x54);
+    lcd_write_byte(0x10);
+    lcd_write_byte(0x32);
+    lcd_write_byte(0x98);
+
+    lcd_write_cmd(0x74);            
+    lcd_write_byte(0x10);    
+    lcd_write_byte(0x85);    
+    lcd_write_byte(0x80);
+    lcd_write_byte(0x00); 
+    lcd_write_byte(0x00); 
+    lcd_write_byte(0x4E);
+    lcd_write_byte(0x00);                    
+
+    lcd_write_cmd(0x98);            
+    lcd_write_byte(0x3e);
+    lcd_write_byte(0x07);
+
+    lcd_write_cmd(0x35);    
+    lcd_write_cmd(config->dis_invert ? 0x21 : 0x20);
+
+    lcd_write_cmd(0x11);
+    lcd_delay_ms(120);
+    lcd_write_cmd(0x29);
+    lcd_delay_ms(20);
 }
 
 static void lcd_config(lcd_config_t *config)
@@ -408,7 +566,7 @@ int lcd_init(lcd_config_t *config)
 
     lcd_rst();//lcd_rst before LCD Init.
     lcd_delay_ms(100);
-    lcd_st7789_config(config);
+    lcd_gc9a01_config(config);
 
     lcd_set_blk(0);
     ESP_LOGI(TAG, "lcd init ok\n");
@@ -421,26 +579,16 @@ void lcd_set_index(uint16_t x_start, uint16_t y_start, uint16_t x_end, uint16_t 
     uint16_t start_pos, end_pos;
     lcd_write_cmd(0x2a);    // CASET (2Ah): Column Address Set 
     // Must write byte than byte
-    if (lcd_obj->horizontal == 3) {
-        start_pos = x_start + 80;
-        end_pos = x_end + 80;
-    } else {
-        start_pos = x_start;
-        end_pos = x_end;
-    }
+    start_pos = x_start;
+    end_pos = x_end;
     lcd_write_byte(start_pos >> 8);
     lcd_write_byte(start_pos & 0xFF);
     lcd_write_byte(end_pos >> 8);
     lcd_write_byte(end_pos & 0xFF);
 
     lcd_write_cmd(0x2b);    // RASET (2Bh): Row Address Set
-    if (lcd_obj->horizontal == 1) {
-        start_pos = x_start + 80;
-        end_pos = x_end + 80;
-    } else {
-        start_pos = y_start;
-        end_pos = y_end;
-    }
+    start_pos = y_start;
+    end_pos = y_end;
     lcd_write_byte(start_pos >> 8);
     lcd_write_byte(start_pos & 0xFF);
     lcd_write_byte(end_pos >> 8);
