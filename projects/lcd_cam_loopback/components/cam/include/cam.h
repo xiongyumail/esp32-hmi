@@ -4,40 +4,37 @@
 extern "C" {
 #endif
 
+#define CAM_DATA_WIDTH (16)
+
 typedef struct {
-    uint8_t bit_width;
-    uint32_t xclk_fre;
-    union {
-        struct {
-            uint32_t xclk:   8;
-            uint32_t pclk:   8;
-            uint32_t vsync:  8;
-            uint32_t hsync:  8;
-        };
-        uint32_t val;
+    uint8_t  width;
+    uint32_t fre;
+    struct {
+        int8_t xclk;
+        int8_t pclk;
+        int8_t vsync;
+        int8_t hsync;
+        int8_t data[CAM_DATA_WIDTH];
     } pin;
-    uint8_t pin_data[16];
-    uint8_t vsync_invert;
-    uint8_t hsync_invert;
-    union {
-        struct {
-            uint32_t width:   16;
-            uint32_t high:    16;
-        };
-        uint32_t val;
-    } size;
-    uint32_t max_buffer_size; // DMA used
-    uint32_t task_stack;
-    uint8_t task_pri;
+    struct {
+        bool xclk;
+        bool pclk;
+        bool vsync;
+        bool hsync;
+        bool data[CAM_DATA_WIDTH];
+    } invert;
     union {
         struct {
             uint32_t jpeg:   1; 
-            uint32_t bit8:   1; 
         };
         uint32_t val;
     } mode;
-    uint8_t *frame1_buffer;
-    uint8_t *frame2_buffer;
+    uint32_t max_dma_buffer_size; // DMA used
+    uint32_t recv_size;
+    uint32_t frame_num;
+    uint32_t frame_caps;
+    uint32_t task_stack;
+    uint8_t  task_pri;
 } cam_config_t;
 
 void cam_start(void);

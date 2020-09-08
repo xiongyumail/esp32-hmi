@@ -1,3 +1,3 @@
-set(COMPONENT_SRCS "main.c")
+set(COMPONENT_SRCS "main.c" "pic.c")
 
 register_component()

@@ -29,42 +29,40 @@ typedef struct {
 } frame_buffer_event_t;
 
 typedef struct {
-    uint32_t buffer_size;
-    uint32_t half_buffer_size;
-    uint32_t node_cnt;
-    uint32_t half_node_cnt;
-    uint32_t dma_size;
-    uint32_t cnt;
-    uint32_t total_cnt;
-    uint16_t width;
-    uint16_t high;
+    uint32_t dma_buffer_size;
+    uint32_t dma_half_buffer_size;
+    uint32_t dma_node_buffer_size;
+    uint32_t dma_node_num;
+    uint32_t dma_half_node_num;
+    uint32_t dma_buffer_num;
     lldesc_t *dma;
-    uint8_t *buffer;
-    uint8_t *frame1_buffer;
-    uint8_t *frame2_buffer;
-    uint8_t frame1_buffer_en;
-    uint8_t frame2_buffer_en;
+    uint8_t *dma_buffer;
+    uint8_t *frame_buffer;
+    uint8_t *frame_en;
+    uint32_t frame_num;
+    uint32_t recv_size;
     uint8_t jpeg_mode;
     uint8_t vsync_pin;
     uint8_t vsync_invert;
-    uint8_t hsync_invert;
-    QueueHandle_t event_queue;
+    SemaphoreHandle_t vsync_sem;
+    SemaphoreHandle_t dma_sem;
     QueueHandle_t frame_buffer_queue;
     TaskHandle_t task_handle;
-    intr_handle_t intr_handle;
+    intr_handle_t cam_intr_handle;
 } cam_obj_t;
 
 static cam_obj_t *cam_obj = NULL;
 
-void IRAM_ATTR cam_isr(void *arg)
+static void IRAM_ATTR cam_isr(void *arg)
 {
-    cam_event_t cam_event = {0};
     BaseType_t HPTaskAwoken = pdFALSE;
-    typeof(I2S0.int_st) int_st = I2S0.int_st;
-    I2S0.int_clr.val = int_st.val;
-    if (int_st.in_suc_eof) {
-        cam_event = CAM_IN_SUC_EOF_EVENT;
-        xQueueSendFromISR(cam_obj->event_queue, (void *)&cam_event, &HPTaskAwoken);
+    typeof(I2S0.int_st) status = I2S0.int_st;
+    if (status.val == 0) {
+        return;
+    }
+    I2S0.int_clr.val = status.val;
+    if (status.in_suc_eof) {
+        xSemaphoreGiveFromISR(cam_obj->dma_sem, &HPTaskAwoken);
     }
 
     if(HPTaskAwoken == pdTRUE) {
@@ -73,19 +71,228 @@ void IRAM_ATTR cam_isr(void *arg)
 }
 
 #include "hal/gpio_ll.h"
-void IRAM_ATTR cam_vsync_isr(void *arg)
+static void IRAM_ATTR cam_vsync_isr(void *arg)
 {
-    cam_event_t cam_event = {0};
     BaseType_t HPTaskAwoken = pdFALSE;
     // filter
     ets_delay_us(1);
     if (gpio_ll_get_level(&GPIO, cam_obj->vsync_pin) == !cam_obj->vsync_invert) {
-        cam_event = CAM_VSYNC_EVENT;
-        xQueueSendFromISR(cam_obj->event_queue, (void *)&cam_event, &HPTaskAwoken);
+        xSemaphoreGiveFromISR(cam_obj->vsync_sem, &HPTaskAwoken);
     }
 
     if(HPTaskAwoken == pdTRUE) {
         portYIELD_FROM_ISR();
+    }
+}
+
+static void cam_vsync_intr_enable(uint8_t en)
+{
+    if (en) {
+        gpio_intr_enable(cam_obj->vsync_pin);
+    } else {
+        gpio_intr_disable(cam_obj->vsync_pin);
+    }
+}
+
+static void cam_dma_stop(void)
+{
+    if (I2S0.int_ena.in_suc_eof == 1) {
+        I2S0.conf.rx_start = 0;
+        I2S0.int_ena.in_suc_eof = 0;
+        I2S0.int_clr.in_suc_eof = 1;
+        I2S0.in_link.stop = 1;
+    }
+}
+
+static void cam_dma_start(void)
+{
+    if (I2S0.int_ena.in_suc_eof == 0) {
+        I2S0.conf.rx_start = 0;
+        I2S0.int_clr.in_suc_eof = 1;
+        I2S0.int_ena.in_suc_eof = 1;
+        I2S0.conf.rx_reset = 1;
+        I2S0.conf.rx_reset = 0;
+        I2S0.conf.rx_fifo_reset = 1;
+        I2S0.conf.rx_fifo_reset = 0;
+        I2S0.lc_conf.in_rst = 1;
+        I2S0.lc_conf.in_rst = 0;
+        I2S0.lc_conf.ahbm_fifo_rst = 1;
+        I2S0.lc_conf.ahbm_fifo_rst = 0;
+        I2S0.lc_conf.ahbm_rst = 1;
+        I2S0.lc_conf.ahbm_rst = 0;
+        I2S0.in_link.start = 1;
+        I2S0.conf.rx_start = 1;
+    }
+}
+
+void cam_stop(void)
+{
+    cam_vsync_intr_enable(0);
+    cam_dma_stop();
+}
+
+void cam_start(void)
+{
+    cam_vsync_intr_enable(1);
+}
+
+typedef enum {
+    CAM_STATE_IDLE = 0,
+    CAM_STATE_READ_BUF = 1,
+} cam_state_t;
+
+uint8_t jpeg_buf[10 * 1024];
+
+#if 1
+//Copy fram from DMA buffer to fram buffer
+static void cam_task(void *arg)
+{
+    int len = 0;
+    int dma_cnt = 0;
+    int frame_cnt = 0;
+    uint8_t char0 = 0;
+    uint8_t char1 = 0;
+    uint8_t *in_buf = NULL;
+    uint8_t *out_buf = NULL;
+    int state = CAM_STATE_IDLE;
+    frame_buffer_event_t frame_buffer_event = {0};
+    cam_dma_start();
+    while (1) {
+            xSemaphoreTake(cam_obj->dma_sem, portMAX_DELAY);
+            memcpy(jpeg_buf, &cam_obj->dma_buffer[(dma_cnt % 2) * cam_obj->dma_half_buffer_size], cam_obj->dma_half_buffer_size);
+            in_buf = jpeg_buf;
+            // in_buf = &cam_obj->dma_buffer[(dma_cnt % 2) * cam_obj->dma_half_buffer_size];
+            for (int x = -2; x < (int)(cam_obj->dma_half_buffer_size - 2); x+=2) {
+                if (x == -2) {
+                    char0 = char1;
+                    char1 = in_buf[3];
+                } else {
+                    if (x % 4 == 0) {
+                        uint8_t temp = in_buf[x + 1];
+                        in_buf[x + 1] = in_buf[x + 3];
+                        in_buf[x + 3] = temp;
+                    }
+                    char0 = in_buf[x + 1];
+                    char1 = in_buf[x + 3];
+                }
+                switch (state) {
+                    case 0: {
+                        if (char0 == 255) {
+                            if (char1 == 216) {
+                                for (int y = 0; y < cam_obj->frame_num; y++) {
+                                    if (cam_obj->frame_en[y]) {
+                                        state = 1;
+                                        frame_cnt = y;
+                                        len = 0;
+                                        out_buf = &cam_obj->frame_buffer[frame_cnt * cam_obj->recv_size];
+                                        out_buf[len++] = char0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    break;
+
+                    case 1: {
+                        if (len >= cam_obj->recv_size - 1) {
+                            state = 0;
+                            break;
+                        }
+                        out_buf[len++] = char0;
+                        if (char0 == 255) {
+                            if (char1 == 217) {
+                                state = 0;
+                                out_buf[len++] = char1;
+                                frame_buffer_event.frame_buffer = &cam_obj->frame_buffer[frame_cnt * cam_obj->recv_size];
+                                frame_buffer_event.len = len;
+                                if (xQueueSend(cam_obj->frame_buffer_queue, (void *)&frame_buffer_event, 0) == pdTRUE) {
+                                    cam_obj->frame_en[frame_cnt] = 0;
+                                }
+                            } else if (char1 == 216) {// strange buffer
+                                len = 0;
+                                out_buf[len++] = char0;
+                            } 
+                        }
+                    }
+                    break;
+                }
+            }
+            dma_cnt++;
+            dma_cnt = dma_cnt % cam_obj->dma_buffer_num;
+    }
+}
+#else
+//Copy fram from DMA buffer to fram buffer
+static void cam_task(void *arg)
+{
+    int dma_cnt = 0;
+    int frame_cnt = 0;
+    uint8_t *in_buf = NULL;
+    uint8_t *out_buf = NULL;
+    int state = CAM_STATE_IDLE;
+    cam_event_t cam_event = {0};
+    frame_buffer_event_t frame_buffer_event = {0};
+    xQueueReset(cam_obj->event_queue);
+    xSemaphoreTake(cam_obj->vsync_sem, 0);
+    xSemaphoreTake(cam_obj->dma_sem, 0);
+    while (1) {
+        switch (state) {
+            case CAM_STATE_IDLE: {
+                for (int x = 0; x < cam_obj->frame_num; x++) {
+                    if (cam_obj->frame_en[x]) {
+                        frame_cnt = x;
+                        xSemaphoreTake(cam_obj->vsync_sem, portMAX_DELAY);
+                        cam_dma_start(); 
+                        state = CAM_STATE_READ_BUF;
+                        break;
+                    }
+                }
+                dma_cnt = 0;
+            }
+            break;
+
+            case CAM_STATE_READ_BUF: {
+                xSemaphoreTake(cam_obj->dma_sem, portMAX_DELAY);
+                if (dma_cnt == 0) {
+                    cam_vsync_intr_enable(1); // 需要cam真正start接收到第一个buf数据再打开vsync中断
+                }
+                out_buf = &cam_obj->frame_buffer[frame_cnt * cam_obj->recv_size + dma_cnt * (cam_obj->dma_half_buffer_size >> 1)];
+                in_buf = &cam_obj->dma_buffer[(dma_cnt % 2) * cam_obj->dma_half_buffer_size];
+                for (int x = 0; x < cam_obj->dma_half_buffer_size; x += 4) {
+                    out_buf[(x >> 1)] = in_buf[x + 3];
+                    out_buf[(x >> 1) + 1] = in_buf[x + 1];
+                }
+
+                if (dma_cnt == cam_obj->dma_buffer_num - 1) {
+                    frame_buffer_event.frame_buffer = &cam_obj->frame_buffer[frame_cnt * cam_obj->recv_size];
+                    frame_buffer_event.len = (dma_cnt + 1) * (cam_obj->dma_half_buffer_size >> 1);
+                    if (xQueueSend(cam_obj->frame_buffer_queue, (void *)&frame_buffer_event, 0) == pdTRUE) {
+                        cam_obj->frame_en[frame_cnt] = 0;
+                    }
+                    state = CAM_STATE_IDLE;
+                } else {
+                    dma_cnt++;
+                }
+            }
+            break;
+        }
+    }
+}
+#endif
+
+size_t cam_take(uint8_t **buffer_p)
+{
+    frame_buffer_event_t frame_buffer_event;
+    xQueueReceive(cam_obj->frame_buffer_queue, (void *)&frame_buffer_event, portMAX_DELAY);
+    *buffer_p = frame_buffer_event.frame_buffer;
+    return frame_buffer_event.len;
+}
+
+void cam_give(uint8_t *buffer)
+{
+    int frame_cnt = (buffer - &cam_obj->frame_buffer[0]) / cam_obj->recv_size;
+    if (frame_cnt < cam_obj->frame_num) {
+        cam_obj->frame_en[frame_cnt] = 1;
     }
 }
 
@@ -102,7 +309,7 @@ static void cam_config(cam_config_t *config)
 
     // 配置采样率
     I2S0.sample_rate_conf.rx_bck_div_num = 1;
-    I2S0.sample_rate_conf.rx_bits_mod = (config->bit_width == 8) ? 0 : 1;
+    I2S0.sample_rate_conf.rx_bits_mod = (config->width == 8) ? 0 : 1;
 
     // 配置数据格式
     I2S0.conf.rx_start = 0;
@@ -145,7 +352,7 @@ static void cam_config(cam_config_t *config)
 static void cam_set_pin(cam_config_t *config)
 {
     gpio_config_t io_conf = {0};
-    io_conf.intr_type = config->vsync_invert ? GPIO_PIN_INTR_NEGEDGE : GPIO_PIN_INTR_POSEDGE;
+    io_conf.intr_type = config->invert.vsync ? GPIO_PIN_INTR_NEGEDGE : GPIO_PIN_INTR_POSEDGE;
     io_conf.pin_bit_mask = 1 << config->pin.vsync; 
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pull_up_en = 1;
@@ -158,30 +365,30 @@ static void cam_set_pin(cam_config_t *config)
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[config->pin.pclk], PIN_FUNC_GPIO);
     gpio_set_direction(config->pin.pclk, GPIO_MODE_INPUT);
     gpio_set_pull_mode(config->pin.pclk, GPIO_FLOATING);
-    gpio_matrix_in(config->pin.pclk, I2S0I_WS_IN_IDX, false);
+    gpio_matrix_in(config->pin.pclk, I2S0I_WS_IN_IDX, config->invert.pclk);
 
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[config->pin.vsync], PIN_FUNC_GPIO);
     gpio_set_direction(config->pin.vsync, GPIO_MODE_INPUT);
     gpio_set_pull_mode(config->pin.vsync, GPIO_FLOATING);
-    gpio_matrix_in(config->pin.vsync, I2S0I_V_SYNC_IDX, !config->vsync_invert);
+    gpio_matrix_in(config->pin.vsync, I2S0I_V_SYNC_IDX, !config->invert.vsync);
 
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[config->pin.hsync], PIN_FUNC_GPIO);
     gpio_set_direction(config->pin.hsync, GPIO_MODE_INPUT);
     gpio_set_pull_mode(config->pin.hsync, GPIO_FLOATING);
-    gpio_matrix_in(config->pin.hsync, I2S0I_H_SYNC_IDX, config->hsync_invert);
+    gpio_matrix_in(config->pin.hsync, I2S0I_H_SYNC_IDX, config->invert.hsync);
 
-    for(int i = 0; i < config->bit_width; i++) {
-        PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[config->pin_data[i]], PIN_FUNC_GPIO);
-        gpio_set_direction(config->pin_data[i], GPIO_MODE_INPUT);
-        gpio_set_pull_mode(config->pin_data[i], GPIO_FLOATING);
+    for(int i = 0; i < config->width; i++) {
+        PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[config->pin.data[i]], PIN_FUNC_GPIO);
+        gpio_set_direction(config->pin.data[i], GPIO_MODE_INPUT);
+        gpio_set_pull_mode(config->pin.data[i], GPIO_FLOATING);
         // 高位对齐，IN16总是最高位
         // fifo按bit来访问数据，rx_bits_mod为8时，数据需要按8位对齐
-        gpio_matrix_in(config->pin_data[i], I2S0I_DATA_IN0_IDX + (16 - config->bit_width) + i, false);
+        gpio_matrix_in(config->pin.data[i], I2S0I_DATA_IN0_IDX + (16 - config->width) + i, config->invert.data[i]);
     }
 
     ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_1_BIT,
-        .freq_hz = config->xclk_fre,
+        .freq_hz = config->fre,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .timer_num = LEDC_TIMER_1
     };
@@ -200,236 +407,45 @@ static void cam_set_pin(cam_config_t *config)
     ESP_LOGI(TAG, "cam_xclk_pin setup\n");
 }
 
-static void cam_vsync_intr_enable(uint8_t en)
-{
-    if (en) {
-        gpio_intr_enable(cam_obj->vsync_pin);
-    } else {
-        gpio_intr_disable(cam_obj->vsync_pin);
-    }
-}
-
-static void cam_dma_stop(void)
-{
-    if (I2S0.int_ena.in_suc_eof == 1) {
-        I2S0.conf.rx_start = 0;
-        I2S0.int_ena.in_suc_eof = 0;
-        I2S0.int_clr.in_suc_eof = 1;
-        I2S0.in_link.stop = 1;
-    }
-}
-
-static void cam_dma_start(void)
-{
-    if (I2S0.int_ena.in_suc_eof == 0) {
-        I2S0.conf.rx_start = 0;
-        I2S0.int_clr.in_suc_eof = 1;
-        I2S0.int_ena.in_suc_eof = 1;
-        I2S0.conf.rx_reset = 1;
-        I2S0.conf.rx_reset = 0;
-        I2S0.conf.rx_fifo_reset = 1;
-        I2S0.conf.rx_fifo_reset = 0;
-        I2S0.lc_conf.in_rst = 1;
-        I2S0.lc_conf.in_rst = 0;
-        I2S0.lc_conf.ahbm_fifo_rst = 1;
-        I2S0.lc_conf.ahbm_fifo_rst = 0;
-        I2S0.lc_conf.ahbm_rst = 1;
-        I2S0.lc_conf.ahbm_rst = 0;
-        I2S0.in_link.start = 1;
-        I2S0.conf.rx_start = 1;
-        if(cam_obj->jpeg_mode) {
-            // 手动给第一帧vsync
-            gpio_matrix_in(cam_obj->vsync_pin, I2S0I_V_SYNC_IDX, cam_obj->vsync_invert);
-            gpio_matrix_in(cam_obj->vsync_pin, I2S0I_V_SYNC_IDX, !cam_obj->vsync_invert);
-        }
-    }
-}
-
-void cam_stop(void)
-{
-    cam_vsync_intr_enable(0);
-    cam_dma_stop();
-}
-
-void cam_start(void)
-{
-    cam_vsync_intr_enable(1);
-}
-
-typedef enum {
-    CAM_STATE_IDLE = 0,
-    CAM_STATE_READ_BUF1 = 1,
-    CAM_STATE_READ_BUF2 = 2,
-} cam_state_t;
-
-//Copy fram from DMA buffer to fram buffer
-static void cam_task(void *arg)
-{
-    int state = CAM_STATE_IDLE;
-    cam_event_t cam_event = {0};
-    frame_buffer_event_t frame_buffer_event = {0};
-    xQueueReset(cam_obj->event_queue);
-    while (1) {
-        xQueueReceive(cam_obj->event_queue, (void *)&cam_event, portMAX_DELAY);
-        switch (state) {
-            case CAM_STATE_IDLE: {
-                if (cam_event == CAM_VSYNC_EVENT) { 
-                    if (cam_obj->frame1_buffer_en) {
-                        cam_dma_start();
-                        cam_vsync_intr_enable(0);
-                        state = CAM_STATE_READ_BUF1;
-                    } else if (cam_obj->frame2_buffer_en) {
-                        cam_dma_start();
-                        cam_vsync_intr_enable(0);
-                        state = CAM_STATE_READ_BUF2;
-                    }
-                    cam_obj->cnt = 0;
-                }
-            }
-            break;
-
-            case CAM_STATE_READ_BUF1: {
-                if (cam_event == CAM_IN_SUC_EOF_EVENT) {
-                    if (cam_obj->cnt == 0) {
-                        cam_vsync_intr_enable(1); // 需要cam真正start接收到第一个buf数据再打开vsync中断
-                    }
-                    uint8_t *out_buf = &cam_obj->frame1_buffer[cam_obj->cnt * (cam_obj->half_buffer_size >> 1)];
-                    uint8_t *in_buf = &cam_obj->buffer[(cam_obj->cnt % 2) * cam_obj->half_buffer_size];
-                    for (int x = 0; x < cam_obj->half_buffer_size; x += 4) {
-                        out_buf[(x >> 1)] = in_buf[x + 3];
-                        out_buf[(x >> 1) + 1] = in_buf[x + 1];
-                    }
-
-                    if(cam_obj->jpeg_mode) {
-                        if (cam_obj->frame1_buffer_en == 0) {
-                            cam_dma_stop();
-                        }
-                    } else {
-                        if(cam_obj->cnt == cam_obj->total_cnt - 1) {
-                            cam_obj->frame1_buffer_en = 0;
-                        }
-                    }
-
-                    if (cam_obj->frame1_buffer_en == 0) {
-                        frame_buffer_event.frame_buffer = cam_obj->frame1_buffer;
-                        frame_buffer_event.len = (cam_obj->cnt + 1) * (cam_obj->half_buffer_size >> 1);
-                        xQueueSend(cam_obj->frame_buffer_queue, (void *)&frame_buffer_event, portMAX_DELAY);
-                        state = CAM_STATE_IDLE;
-                    } else {
-                        cam_obj->cnt++;
-                    }
-                } else if (cam_event == CAM_VSYNC_EVENT) {
-                    if(cam_obj->jpeg_mode) {
-                        cam_obj->frame1_buffer_en = 0;
-                    }
-                }
-            }
-            break;
-
-            case CAM_STATE_READ_BUF2: {
-                if (cam_event == CAM_IN_SUC_EOF_EVENT) {
-                    if (cam_obj->cnt == 0) {
-                        cam_vsync_intr_enable(1); // 需要cam真正start接收到第一个buf数据再打开vsync中断
-                    }
-                    uint8_t *out_buf = &cam_obj->frame2_buffer[cam_obj->cnt * (cam_obj->half_buffer_size >> 1)];
-                    uint8_t *in_buf = &cam_obj->buffer[(cam_obj->cnt % 2) * cam_obj->half_buffer_size];
-                    for (int x = 0; x < cam_obj->half_buffer_size; x += 4) {
-                        out_buf[(x >> 1)] = in_buf[x + 3];
-                        out_buf[(x >> 1) + 1] = in_buf[x + 1];
-                    }
-
-                    if(cam_obj->jpeg_mode) {
-                        if (cam_obj->frame2_buffer_en == 0) {
-                            cam_dma_stop();
-                        }
-                    } else {
-                        if(cam_obj->cnt == cam_obj->total_cnt - 1) {
-                            cam_obj->frame2_buffer_en = 0;
-                        }
-                    }
-
-                    if (cam_obj->frame2_buffer_en == 0) {
-                        frame_buffer_event.frame_buffer = cam_obj->frame2_buffer;
-                        frame_buffer_event.len = (cam_obj->cnt + 1) * (cam_obj->half_buffer_size >> 1);
-                        xQueueSend(cam_obj->frame_buffer_queue, (void *)&frame_buffer_event, portMAX_DELAY);
-                        state = CAM_STATE_IDLE;
-                    } else {
-                        cam_obj->cnt++;
-                    }
-                } else if (cam_event == CAM_VSYNC_EVENT) {
-                    if(cam_obj->jpeg_mode) {
-                        cam_obj->frame2_buffer_en = 0;
-                    }
-                }
-            }
-            break;
-        }
-    }
-}
-
-size_t cam_take(uint8_t **buffer_p)
-{
-    frame_buffer_event_t frame_buffer_event;
-    xQueueReceive(cam_obj->frame_buffer_queue, (void *)&frame_buffer_event, portMAX_DELAY);
-    *buffer_p = frame_buffer_event.frame_buffer;
-    return frame_buffer_event.len;
-}
-
-void cam_give(uint8_t *buffer)
-{
-    if (buffer == cam_obj->frame1_buffer) {
-        cam_obj->frame1_buffer_en = 1;
-    } else if (buffer == cam_obj->frame2_buffer){
-        cam_obj->frame2_buffer_en = 1;
-    }
-}
-
 void cam_dma_config(cam_config_t *config) 
 {
-    int cnt = 0;
-    uint32_t total_len = config->size.width * config->size.high * (config->mode.bit8 ? sizeof(uint8_t) : sizeof(uint16_t));
-    total_len = total_len * 2; // ESP32 4byte data-> 2byte valid data 
-    if (config->mode.jpeg) {
-        cam_obj->buffer_size = 8000;
-        cam_obj->half_buffer_size = cam_obj->buffer_size / 2;
-        cam_obj->dma_size = 4000;
-    } else {
-        for (cnt = 0;;cnt++) { // 寻找可以整除的buffer大小
-            if (total_len % (config->max_buffer_size - cnt) == 0) {
-                break;
-            }
+    int dma_cnt = 0;
+    uint32_t recv_size = cam_obj->recv_size * 2; // ESP32 4byte data-> 2byte valid data 
+    for (dma_cnt = 0;;dma_cnt++) { // 寻找可以整除的buffer大小
+        if (recv_size % (config->max_dma_buffer_size - dma_cnt) == 0) {
+            break;
         }
-        cam_obj->buffer_size = config->max_buffer_size - cnt;
-
-        cam_obj->half_buffer_size = cam_obj->buffer_size / 2;
-        for (cnt = 0;;cnt++) { // 寻找可以整除的dma大小
-            if ((cam_obj->half_buffer_size) % (CAM_DMA_MAX_SIZE - cnt) == 0) {
-                break;
-            }
-        }
-        cam_obj->dma_size = CAM_DMA_MAX_SIZE - cnt;
     }
+    cam_obj->dma_buffer_size = config->max_dma_buffer_size - dma_cnt;
 
-    cam_obj->node_cnt = (cam_obj->buffer_size) / cam_obj->dma_size; // DMA节点个数
-    cam_obj->half_node_cnt = cam_obj->node_cnt / 2;
-    cam_obj->total_cnt = total_len / cam_obj->half_buffer_size; // 产生中断拷贝的次数, 乒乓拷贝
+    cam_obj->dma_half_buffer_size = cam_obj->dma_buffer_size / 2;
+    for (dma_cnt = 0;;dma_cnt++) { // 寻找可以整除的dma大小
+        if ((cam_obj->dma_half_buffer_size) % (CAM_DMA_MAX_SIZE - dma_cnt) == 0) {
+            break;
+        }
+    }
+    cam_obj->dma_node_buffer_size = CAM_DMA_MAX_SIZE - dma_cnt;
 
-    ESP_LOGI(TAG, "cam_buffer_size: %d, cam_dma_size: %d, cam_dma_node_cnt: %d, cam_total_cnt: %d\n", cam_obj->buffer_size, cam_obj->dma_size, cam_obj->node_cnt, cam_obj->total_cnt);
+    cam_obj->dma_node_num = (cam_obj->dma_buffer_size) / cam_obj->dma_node_buffer_size; // DMA节点个数
+    cam_obj->dma_half_node_num = cam_obj->dma_node_num / 2;
+    cam_obj->dma_buffer_num = recv_size / cam_obj->dma_half_buffer_size; // 产生中断拷贝的次数, 乒乓拷贝
 
-    cam_obj->dma    = (lldesc_t *)heap_caps_malloc(cam_obj->node_cnt * sizeof(lldesc_t), MALLOC_CAP_DMA);
-    cam_obj->buffer = (uint8_t *)heap_caps_malloc(cam_obj->buffer_size * sizeof(uint8_t), MALLOC_CAP_DMA);
+    ESP_LOGI(TAG, "dma_buffer_size: %d, dma_node_buffer_size: %d, dma_node_num: %d, dma_buffer_num: %d\n", cam_obj->dma_buffer_size, cam_obj->dma_node_buffer_size, cam_obj->dma_node_num, cam_obj->dma_buffer_num);
 
-    for (int x = 0; x < cam_obj->node_cnt; x++) {
-        cam_obj->dma[x].size = cam_obj->dma_size;
-        cam_obj->dma[x].length = cam_obj->dma_size;
+    cam_obj->dma    = (lldesc_t *)heap_caps_malloc(cam_obj->dma_node_num * sizeof(lldesc_t), MALLOC_CAP_DMA);
+    cam_obj->dma_buffer = (uint8_t *)heap_caps_malloc(cam_obj->dma_buffer_size * sizeof(uint8_t), MALLOC_CAP_DMA);
+
+    for (int x = 0; x < cam_obj->dma_node_num; x++) {
+        cam_obj->dma[x].size = cam_obj->dma_node_buffer_size;
+        cam_obj->dma[x].length = cam_obj->dma_node_buffer_size;
         cam_obj->dma[x].eof = 0;
         cam_obj->dma[x].owner = 1;
-        cam_obj->dma[x].buf = (cam_obj->buffer + cam_obj->dma_size * x);
-        cam_obj->dma[x].empty = &cam_obj->dma[(x + 1) % cam_obj->node_cnt];
+        cam_obj->dma[x].buf = (cam_obj->dma_buffer + cam_obj->dma_node_buffer_size * x);
+        cam_obj->dma[x].empty = &cam_obj->dma[(x + 1) % cam_obj->dma_node_num];
     }
 
     I2S0.in_link.addr = ((uint32_t)&cam_obj->dma[0]) & 0xfffff;
-    I2S0.rx_eof_num = cam_obj->half_buffer_size / 4; // 乒乓操作, ESP32 4Byte
+    I2S0.rx_eof_num = cam_obj->dma_half_buffer_size / 4; // 乒乓操作, ESP32 4Byte
 }
 
 void cam_deinit()
@@ -438,12 +454,13 @@ void cam_deinit()
         return;
     }
     cam_stop();
-    esp_intr_free(cam_obj->intr_handle);
+    esp_intr_free(cam_obj->cam_intr_handle);
     vTaskDelete(cam_obj->task_handle);
-    vQueueDelete(cam_obj->event_queue);
     vQueueDelete(cam_obj->frame_buffer_queue);
     free(cam_obj->dma);
-    free(cam_obj->buffer);
+    free(cam_obj->dma_buffer);
+    free(cam_obj->frame_buffer);
+    free(cam_obj->frame_en);
     free(cam_obj);
 }
 
@@ -454,35 +471,25 @@ int cam_init(const cam_config_t *config)
         ESP_LOGI(TAG, "camera object malloc error\n");
         return -1;
     }
-    cam_obj->width = config->size.width;
-    cam_obj->high = config->size.high;
-    cam_obj->frame1_buffer = config->frame1_buffer;
-    cam_obj->frame2_buffer = config->frame2_buffer;
     cam_obj->jpeg_mode = config->mode.jpeg;
+    cam_obj->frame_num = config->frame_num;
+    cam_obj->recv_size = config->recv_size;
     cam_obj->vsync_pin = config->pin.vsync;
-    cam_obj->vsync_invert = config->vsync_invert;
-    cam_obj->hsync_invert = config->hsync_invert;
+    cam_obj->vsync_invert = config->invert.vsync;
     cam_set_pin(config);
     cam_config(config);
     cam_dma_config(config);
 
-    cam_obj->event_queue = xQueueCreate(2, sizeof(cam_event_t));
-    cam_obj->frame_buffer_queue = xQueueCreate(2, sizeof(frame_buffer_event_t));
+    cam_obj->vsync_sem = xSemaphoreCreateBinary();
+    cam_obj->dma_sem = xSemaphoreCreateBinary();
+    cam_obj->frame_buffer_queue = xQueueCreate(cam_obj->frame_num, sizeof(frame_buffer_event_t));
+    cam_obj->frame_buffer = (uint8_t *)heap_caps_malloc(cam_obj->frame_num * cam_obj->recv_size * sizeof(uint8_t), config->frame_caps);
+    cam_obj->frame_en = (uint8_t *)heap_caps_malloc(cam_obj->frame_num * sizeof(uint8_t), MALLOC_CAP_DEFAULT);
 
-    if (cam_obj->frame1_buffer != NULL) {
-        ESP_LOGI(TAG, "frame1_buffer_en\n");
-        cam_obj->frame1_buffer_en = 1;
-    } else {
-        cam_obj->frame1_buffer_en = 0;
+    for (int x = 0; x < cam_obj->frame_num; x++) {
+        cam_obj->frame_en[x] = 1;
     }
-    
-    if (cam_obj->frame2_buffer != NULL) {
-        ESP_LOGI(TAG, "frame2_buffer_en\n");
-        cam_obj->frame2_buffer_en = 1;
-    } else {
-        cam_obj->frame2_buffer_en = 0;
-    }
-    esp_intr_alloc(ETS_I2S0_INTR_SOURCE, ESP_INTR_FLAG_LOWMED | ESP_INTR_FLAG_IRAM, cam_isr, NULL, &cam_obj->intr_handle);
+    esp_intr_alloc(ETS_I2S0_INTR_SOURCE, ESP_INTR_FLAG_LOWMED | ESP_INTR_FLAG_IRAM, cam_isr, NULL, &cam_obj->cam_intr_handle);
     xTaskCreate(cam_task, "cam_task", config->task_stack, NULL, config->task_pri, &cam_obj->task_handle);
     return 0;
 }
